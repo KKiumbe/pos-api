@@ -8,6 +8,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   PORT: z.coerce.number().default(4000),
   FRONTEND_URL: z.string().url(),
+  ALLOWED_ORIGINS: z.string().default(""),
   TENANT_SEED_SLUG: z.string().default("demo-restaurant"),
   MPESA_MODE: z.enum(["mock", "live"]).default("mock"),
   SMS_MODE: z.enum(["mock", "live"]).default("live"),

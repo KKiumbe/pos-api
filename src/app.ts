@@ -20,9 +20,22 @@ import { tenantRouter } from "./modules/tenant/tenant.routes.js";
 export const app = express();
 
 app.use(helmet());
+const allowedOrigins = new Set([
+  env.FRONTEND_URL,
+  ...env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+]);
+
 app.use(
   cors({
-    origin: env.FRONTEND_URL
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. curl, mobile apps, same-origin)
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+      }
+    },
+    credentials: true
   })
 );
 app.use(express.json());

@@ -18,6 +18,30 @@ inventoryRouter.get("/items", requireRole(["SUPER_ADMIN", "MANAGER", "CASHIER"])
   return res.json(items.map(serializeStockItem));
 });
 
+inventoryRouter.patch("/items/:id", requireRole(["SUPER_ADMIN", "MANAGER"]), async (req: AuthenticatedRequest, res) => {
+  const id = Number(req.params.id);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ message: "Invalid item ID." });
+  }
+
+  const item = await prisma.stockItem.findFirst({
+    where: { id, tenantId: req.auth!.tenantId }
+  });
+
+  if (!item) {
+    return res.status(404).json({ message: "Stock item not found." });
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (req.body?.name !== undefined) updates.name = String(req.body.name).trim();
+  if (req.body?.unit !== undefined) updates.unit = String(req.body.unit).trim();
+  if (req.body?.quantity !== undefined) updates.quantity = Number(req.body.quantity);
+  if (req.body?.reorderLevel !== undefined) updates.reorderLevel = Number(req.body.reorderLevel);
+
+  const updated = await prisma.stockItem.update({ where: { id }, data: updates });
+  return res.json(serializeStockItem(updated));
+});
+
 inventoryRouter.post("/items", requireRole(["SUPER_ADMIN", "MANAGER"]), async (req: AuthenticatedRequest, res) => {
   const name = String(req.body?.name ?? "").trim();
   const unit = String(req.body?.unit ?? "").trim();
