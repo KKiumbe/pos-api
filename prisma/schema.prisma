@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  MANAGER
+  CASHIER
+  KITCHEN
+  DELIVERY
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+}
+
+enum OrderStatus {
+  OPEN
+  SENT_TO_KITCHEN
+  PARTIALLY_READY
+  READY
+  PAID
+  VOIDED
+}
+
+enum OrderItemStatus {
+  PENDING
+  PREPARING
+  READY
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model Tenant {
+  id          Int       @id @default(autoincrement())
+  name        String
+  slug        String    @unique
+  address     String?
+  phone       String?
+  contactEmail String?
+  logoUrl     String?
+  brandColor  String?   @default("#a64b2a")
+  currency    String    @default("KES")
+  timezone    String    @default("Africa/Nairobi")
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  users       User[]
+  tables      Table[]
+  categories  MenuCategory[]
+  menuItems   MenuItem[]
+  orders      Order[]
+  recipes     Recipe[]
+  stockItems  StockItem[]
+  payments    Payment[]
+  smsMessages SmsMessage[]
+  mpesaTransactions MpesaTransaction[]
+  smsConfig   SmsConfig?
+  mpesaConfig MpesaConfig?
+  subscription SubscriptionPlan?
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  firstName    String
+  lastName     String
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  role         Role
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders       Order[]  @relation("CreatedOrders")
+  otpTokens    PasswordResetOtp[]
+
+  @@index([tenantId])
+}
+
+model PasswordResetOtp {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  otpHash   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Table {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  label     String
+  capacity  Int      @default(4)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders    Order[]
+
+  @@unique([tenantId, label])
+  @@index([tenantId])
+}
+
+model MenuCategory {
+  id        Int        @id @default(autoincrement())
+  tenantId  Int
+  name      String
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items     MenuItem[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model MenuItem {
+  id          Int          @id @default(autoincrement())
+  tenantId    Int
+  categoryId  Int
+  name        String
+  description String?
+  photoUrl    String?
+  price       Decimal      @db.Decimal(10, 2)
+  isAvailable Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  orderItems  OrderItem[]
+  recipe      Recipe?
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Order {
+  id            Int         @id @default(autoincrement())
+  tenantId      Int
+  orderNumber   String
+  type          OrderType
+  status        OrderStatus @default(OPEN)
+  inventoryDeducted Boolean  @default(false)
+  tableId       Int?
+  customerName  String?
+  customerPhone String?
+  deliveryLocation String?
+  deliveryAddress String?
+  createdById   Int
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table         Table?      @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  createdBy     User        @relation("CreatedOrders", fields: [createdById], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  payments      Payment[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, status])
+}
+
+model OrderItem {
+  id         Int             @id @default(autoincrement())
+  orderId    Int
+  menuItemId Int
+  quantity   Int
+  unitPrice  Decimal         @db.Decimal(10, 2)
+  notes      String?
+  status     OrderItemStatus @default(PENDING)
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem   MenuItem        @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+}
+
+model Payment {
+  id         Int           @id @default(autoincrement())
+  tenantId   Int
+  orderId    Int
+  method     PaymentMethod
+  amount     Decimal       @db.Decimal(10, 2)
+  status     PaymentStatus @default(COMPLETED)
+  reference  String?
+  paidAt     DateTime      @default(now())
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  mpesaTransactions MpesaTransaction[]
+
+  @@index([tenantId])
+}
+
+model StockItem {
+  id           Int      @id @default(autoincrement())
+  tenantId     Int
+  name         String
+  unit         String
+  quantity     Decimal  @db.Decimal(10, 2)
+  reorderLevel Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  recipeItems  RecipeItem[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Recipe {
+  id         Int          @id @default(autoincrement())
+  tenantId   Int
+  menuItemId Int          @unique
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  tenant     Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  menuItem   MenuItem     @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  items      RecipeItem[]
+
+  @@index([tenantId])
+}
+
+model RecipeItem {
+  id          Int       @id @default(autoincrement())
+  recipeId    Int
+  stockItemId Int
+  quantity    Decimal   @db.Decimal(10, 2)
+  recipe      Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+}
+
+model SmsMessage {
+  id         Int      @id @default(autoincrement())
+  tenantId   Int
+  recipient  String
+  message    String
+  status     String   @default("QUEUED")
+  provider   String   @default("mock-sms")
+  createdAt  DateTime @default(now())
+  sentAt     DateTime?
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+}
+
+model MpesaTransaction {
+  id              Int      @id @default(autoincrement())
+  tenantId        Int
+  paymentId       Int?
+  checkoutRequestId String  @unique
+  phoneNumber     String
+  amount          Decimal  @db.Decimal(10, 2)
+  reference       String?
+  status          String   @default("PENDING")
+  createdAt       DateTime @default(now())
+  completedAt     DateTime?
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payment         Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+}
+
+model SmsConfig {
+  id          Int      @id @default(autoincrement())
+  tenantId     Int     @unique
+  provider     String  @default("mock-sms")
+  senderId     String?
+  apiKey       String?
+  apiSecret    String?
+  username     String?
+  isActive     Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model MpesaConfig {
+  id            Int      @id @default(autoincrement())
+  tenantId      Int      @unique
+  environment   String   @default("sandbox")
+  shortCode     String?
+  tillNumber    String?
+  passkey       String?
+  consumerKey   String?
+  consumerSecret String?
+  callbackUrl   String?
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model SubscriptionPlan {
+  id             Int      @id @default(autoincrement())
+  tenantId       Int      @unique
+  planName       String   @default("Standard")
+  monthlyCharge  Decimal  @db.Decimal(10, 2)
+  billingDay     Int      @default(1)
+  status         String   @default("ACTIVE")
+  nextBillingDate DateTime?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
