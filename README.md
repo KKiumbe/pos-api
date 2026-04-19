@@ -78,3 +78,4 @@ DATABASE_URL="postgresql://apple@localhost:5433/tableflow?host=/Volumes/software
 - Recipe-linked stock deduction happens on full payment.
 - M-Pesa is modeled as a first-class payment method, with transaction visibility in place while live provider integration is still pending.
 - SMS has a working mock dispatch log and is ready for a live provider adapter.
+# pos-api
