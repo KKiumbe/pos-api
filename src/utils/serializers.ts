@@ -28,6 +28,30 @@ export function serializeUser(user: {
   };
 }
 
+export function serializeDeliveryAgent(agent: {
+  id: number;
+  tenantId: number;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  notes: string | null;
+  isActive: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
+}) {
+  return {
+    id: agent.id,
+    tenantId: agent.tenantId,
+    firstName: agent.firstName,
+    lastName: agent.lastName,
+    phone: agent.phone,
+    notes: agent.notes,
+    isActive: agent.isActive,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt
+  };
+}
+
 export function serializeMenuItem(item: any) {
   return {
     id: item.id,
@@ -44,6 +68,14 @@ export function serializeMenuItem(item: any) {
 export function serializeStockItem(item: any) {
   return {
     id: item.id,
+    type: item.type,
+    menuItemId: item.menuItemId ?? null,
+    menuItem: item.menuItem
+      ? {
+          id: item.menuItem.id,
+          name: item.menuItem.name
+        }
+      : null,
     name: item.name,
     unit: item.unit,
     quantity: toNumber(item.quantity),
@@ -71,6 +103,12 @@ export function serializeOrder(order: any) {
     inventoryDeducted: order.inventoryDeducted,
     table: order.table ?? null,
     tableId: order.tableId,
+    deliveryAgentId: order.deliveryAgentId ?? null,
+    deliveryAgent: order.deliveryAgent
+      ? serializeDeliveryAgent(order.deliveryAgent)
+      : null,
+    dispatchSmsRequested: Boolean(order.dispatchSmsRequested),
+    dispatchSmsSentAt: order.dispatchSmsSentAt ?? null,
     customerName: order.customerName,
     customerPhone: order.customerPhone,
     deliveryLocation: order.deliveryLocation,

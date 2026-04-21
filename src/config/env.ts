@@ -9,6 +9,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   FRONTEND_URL: z.string().url(),
   ALLOWED_ORIGINS: z.string().default(""),
+  CORS_ORIGINS: z.string().default("http://localhost:3000,http://localhost:3001"),
   TENANT_SEED_SLUG: z.string().default("demo-restaurant"),
   MPESA_MODE: z.enum(["mock", "live"]).default("mock"),
   SMS_MODE: z.enum(["mock", "live"]).default("live"),
@@ -19,4 +20,14 @@ const envSchema = z.object({
   ADVANTA_BALANCE_ENDPOINT: z.string().default("https://quicksms.advantasms.com/api/services/getbalance/")
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+
+export const env = {
+  ...parsedEnv,
+  ALLOWED_ORIGINS: parsedEnv.ALLOWED_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+  CORS_ORIGINS: parsedEnv.CORS_ORIGINS.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+};

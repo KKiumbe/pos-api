@@ -9,7 +9,7 @@ export type AuthTokenPayload = {
 };
 
 export function signAuthToken(payload: AuthTokenPayload) {
-  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "12h" });
+  return jwt.sign(payload, env.JWT_SECRET, { expiresIn: "7d" });
 }
 
 export function verifyAuthToken(token: string) {

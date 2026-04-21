@@ -1,7 +1,153 @@
 import bcrypt from "bcryptjs";
-import { PrismaClient, Role } from "@prisma/client";
+import { OrderItemStatus, OrderStatus, OrderType, PaymentMethod, Role, StockItemType, StockUnit, PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+
+type SeedOrderItem = {
+  menuItemId: number;
+  quantity: number;
+  unitPrice: number;
+  status?: OrderItemStatus;
+};
+
+type SeedPayment = {
+  method: PaymentMethod;
+  amount: number;
+  reference: string;
+  paidAt: Date;
+};
+
+async function upsertSeedOrder({
+  tenantId,
+  orderNumber,
+  type,
+  status,
+  createdById,
+  tableId,
+  deliveryAgentId,
+  dispatchSmsRequested = false,
+  dispatchSmsSentAt = null,
+  customerName = null,
+  customerPhone = null,
+  deliveryLocation = null,
+  deliveryAddress = null,
+  inventoryDeducted = false,
+  createdAt,
+  items,
+  payments = []
+}: {
+  tenantId: number;
+  orderNumber: string;
+  type: OrderType;
+  status: OrderStatus;
+  createdById: number;
+  tableId?: number | null;
+  deliveryAgentId?: number | null;
+  dispatchSmsRequested?: boolean;
+  dispatchSmsSentAt?: Date | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  deliveryLocation?: string | null;
+  deliveryAddress?: string | null;
+  inventoryDeducted?: boolean;
+  createdAt: Date;
+  items: SeedOrderItem[];
+  payments?: SeedPayment[];
+}) {
+  const itemData = items.map((item) => ({
+    menuItemId: item.menuItemId,
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    status: item.status ?? OrderItemStatus.PENDING
+  }));
+
+  const order = await prisma.order.upsert({
+    where: { tenantId_orderNumber: { tenantId, orderNumber } },
+    update: {
+      type,
+      status,
+      tableId: tableId ?? null,
+      deliveryAgentId: type === OrderType.TAKEAWAY ? deliveryAgentId ?? null : null,
+      dispatchSmsRequested,
+      dispatchSmsSentAt,
+      customerName,
+      customerPhone,
+      deliveryLocation,
+      deliveryAddress,
+      inventoryDeducted,
+      createdById,
+      createdAt,
+      items: {
+        deleteMany: {},
+        create: itemData
+      }
+    },
+    create: {
+      tenantId,
+      orderNumber,
+      type,
+      status,
+      tableId: tableId ?? null,
+      deliveryAgentId: type === OrderType.TAKEAWAY ? deliveryAgentId ?? null : null,
+      dispatchSmsRequested,
+      dispatchSmsSentAt,
+      customerName,
+      customerPhone,
+      deliveryLocation,
+      deliveryAddress,
+      inventoryDeducted,
+      createdById,
+      createdAt,
+      items: {
+        create: itemData
+      }
+    }
+  });
+
+  await prisma.payment.deleteMany({ where: { orderId: order.id } });
+
+  for (const payment of payments) {
+    const createdPayment = await prisma.payment.create({
+      data: {
+        tenantId,
+        orderId: order.id,
+        method: payment.method,
+        amount: payment.amount,
+        reference: payment.reference,
+        paidAt: payment.paidAt
+      }
+    });
+
+    if (payment.method === PaymentMethod.MPESA) {
+      await prisma.mpesaTransaction.upsert({
+        where: { checkoutRequestId: `SEED-${payment.reference}` },
+        update: {
+          tenantId,
+          paymentId: createdPayment.id,
+          phoneNumber: customerPhone ?? "254700000000",
+          amount: payment.amount,
+          reference: payment.reference,
+          status: "COMPLETED",
+          createdAt: payment.paidAt,
+          completedAt: payment.paidAt
+        },
+        create: {
+          tenantId,
+          paymentId: createdPayment.id,
+          checkoutRequestId: `SEED-${payment.reference}`,
+          phoneNumber: customerPhone ?? "254700000000",
+          amount: payment.amount,
+          reference: payment.reference,
+          status: "COMPLETED",
+          createdAt: payment.paidAt,
+          completedAt: payment.paidAt
+        }
+      });
+    }
+  }
+
+  return order;
+}
 
 async function main() {
   const passwordHash = await bcrypt.hash("Admin@1234", 10);
@@ -129,6 +275,35 @@ async function main() {
     });
   }
 
+  const deliveryAgents = [
+    ["John", "Mwangi", "0700111222", "Owns a motorbike and handles Westlands runs."],
+    ["Faith", "Achieng", "0712333444", "Usually available for lunchtime CBD pickups."]
+  ] as const;
+
+  for (const [firstName, lastName, phone, notes] of deliveryAgents) {
+    await prisma.deliveryAgent.upsert({
+      where: {
+        tenantId_phone: {
+          tenantId: tenant.id,
+          phone
+        }
+      },
+      update: {
+        firstName,
+        lastName,
+        notes,
+        isActive: true
+      },
+      create: {
+        tenantId: tenant.id,
+        firstName,
+        lastName,
+        phone,
+        notes
+      }
+    });
+  }
+
   for (const tableLabel of ["T1", "T2", "T3", "T4", "Patio"]) {
     await prisma.table.upsert({
       where: {
@@ -212,7 +387,7 @@ async function main() {
     }
   });
 
-  await prisma.menuItem.upsert({
+  const passionJuice = await prisma.menuItem.upsert({
     where: {
       tenantId_name: {
         tenantId: tenant.id,
@@ -241,7 +416,7 @@ async function main() {
     create: {
       tenantId: tenant.id,
       name: "Beef",
-      unit: "kg",
+      unit: StockUnit.KILOGRAM,
       quantity: 20,
       reorderLevel: 5
     }
@@ -258,7 +433,7 @@ async function main() {
     create: {
       tenantId: tenant.id,
       name: "Maize Flour",
-      unit: "kg",
+      unit: StockUnit.KILOGRAM,
       quantity: 30,
       reorderLevel: 8
     }
@@ -275,7 +450,7 @@ async function main() {
     create: {
       tenantId: tenant.id,
       name: "Chicken",
-      unit: "kg",
+      unit: StockUnit.KILOGRAM,
       quantity: 18,
       reorderLevel: 4
     }
@@ -292,9 +467,34 @@ async function main() {
     create: {
       tenantId: tenant.id,
       name: "Rice",
-      unit: "kg",
+      unit: StockUnit.KILOGRAM,
       quantity: 25,
       reorderLevel: 6
+    }
+  });
+
+  await prisma.stockItem.upsert({
+    where: {
+      tenantId_name: {
+        tenantId: tenant.id,
+        name: "Passion Juice Bottles"
+      }
+    },
+    update: {
+      type: StockItemType.MENU,
+      menuItemId: passionJuice.id,
+      unit: StockUnit.BOTTLE,
+      quantity: 48,
+      reorderLevel: 12
+    },
+    create: {
+      tenantId: tenant.id,
+      type: StockItemType.MENU,
+      menuItemId: passionJuice.id,
+      name: "Passion Juice Bottles",
+      unit: StockUnit.BOTTLE,
+      quantity: 48,
+      reorderLevel: 12
     }
   });
 
@@ -342,6 +542,116 @@ async function main() {
         ]
       }
     }
+  });
+
+  const demoCashier = await prisma.user.findUniqueOrThrow({ where: { email: "cashier@demo.tableflow.app" } });
+  const demoManager = await prisma.user.findUniqueOrThrow({ where: { email: "manager@demo.tableflow.app" } });
+  const demoTableT1 = await prisma.table.findUniqueOrThrow({ where: { tenantId_label: { tenantId: tenant.id, label: "T1" } } });
+  const demoTablePatio = await prisma.table.findUniqueOrThrow({ where: { tenantId_label: { tenantId: tenant.id, label: "Patio" } } });
+  const demoRider = await prisma.deliveryAgent.findFirstOrThrow({ where: { tenantId: tenant.id, phone: "0700111222" } });
+
+  await upsertSeedOrder({
+    tenantId: tenant.id,
+    orderNumber: "DIN-0001",
+    type: OrderType.DINE_IN,
+    status: OrderStatus.OPEN,
+    tableId: demoTableT1.id,
+    customerName: "Walk-in table",
+    customerPhone: "0711000001",
+    createdById: demoCashier.id,
+    createdAt: new Date("2026-04-21T08:10:00.000Z"),
+    items: [
+      { menuItemId: ugaliBeef.id, quantity: 2, unitPrice: 650 },
+      { menuItemId: passionJuice.id, quantity: 2, unitPrice: 220 }
+    ]
+  });
+
+  await upsertSeedOrder({
+    tenantId: tenant.id,
+    orderNumber: "DIN-0002",
+    type: OrderType.DINE_IN,
+    status: OrderStatus.SENT_TO_KITCHEN,
+    tableId: demoTablePatio.id,
+    customerName: "Miriam",
+    customerPhone: "0711000002",
+    createdById: demoCashier.id,
+    createdAt: new Date("2026-04-21T08:40:00.000Z"),
+    items: [
+      { menuItemId: pilau.id, quantity: 1, unitPrice: 780, status: OrderItemStatus.PREPARING },
+      { menuItemId: passionJuice.id, quantity: 1, unitPrice: 220, status: OrderItemStatus.READY }
+    ]
+  });
+
+  await upsertSeedOrder({
+    tenantId: tenant.id,
+    orderNumber: "TKW-0003",
+    type: OrderType.TAKEAWAY,
+    status: OrderStatus.READY,
+    deliveryAgentId: demoRider.id,
+    dispatchSmsRequested: true,
+    dispatchSmsSentAt: new Date("2026-04-21T09:03:00.000Z"),
+    customerName: "Peter Njoroge",
+    customerPhone: "254712345678",
+    deliveryLocation: "Westlands Gate B",
+    deliveryAddress: "Waiyaki Way, Nairobi",
+    createdById: demoManager.id,
+    createdAt: new Date("2026-04-21T08:55:00.000Z"),
+    items: [
+      { menuItemId: ugaliBeef.id, quantity: 1, unitPrice: 650, status: OrderItemStatus.READY },
+      { menuItemId: pilau.id, quantity: 1, unitPrice: 780, status: OrderItemStatus.READY }
+    ]
+  });
+
+  await upsertSeedOrder({
+    tenantId: tenant.id,
+    orderNumber: "TKW-0004",
+    type: OrderType.TAKEAWAY,
+    status: OrderStatus.PAID,
+    deliveryAgentId: demoRider.id,
+    dispatchSmsRequested: true,
+    dispatchSmsSentAt: new Date("2026-04-21T09:20:00.000Z"),
+    customerName: "Nadia",
+    customerPhone: "254700987654",
+    deliveryLocation: "Kilimani",
+    deliveryAddress: "Kindaruma Road",
+    createdById: demoCashier.id,
+    createdAt: new Date("2026-04-21T09:10:00.000Z"),
+    inventoryDeducted: true,
+    items: [
+      { menuItemId: pilau.id, quantity: 2, unitPrice: 780, status: OrderItemStatus.READY }
+    ],
+    payments: [
+      {
+        method: PaymentMethod.MPESA,
+        amount: 1560,
+        reference: "MPESA-DEMO-0004",
+        paidAt: new Date("2026-04-21T09:25:00.000Z")
+      }
+    ]
+  });
+
+  await prisma.smsMessage.deleteMany({ where: { tenantId: tenant.id, provider: "seed" } });
+  await prisma.smsMessage.createMany({
+    data: [
+      {
+        tenantId: tenant.id,
+        recipient: demoRider.phone,
+        message: "New pickup TKW-0003 at Demo Restaurant for Peter Njoroge for Westlands Gate B.",
+        status: "SENT",
+        provider: "seed",
+        createdAt: new Date("2026-04-21T09:03:00.000Z"),
+        sentAt: new Date("2026-04-21T09:03:20.000Z")
+      },
+      {
+        tenantId: tenant.id,
+        recipient: "254700987654",
+        message: "Payment received for TKW-0004. Thank you for ordering from Demo Restaurant.",
+        status: "SENT",
+        provider: "seed",
+        createdAt: new Date("2026-04-21T09:25:00.000Z"),
+        sentAt: new Date("2026-04-21T09:25:10.000Z")
+      }
+    ]
   });
 
   // ── Jua Kali Grill — owner's restaurant ──
@@ -401,6 +711,36 @@ async function main() {
     }
   });
 
+  await prisma.user.upsert({
+    where: { email: "delivery@juakaligrill.co.ke" },
+    update: {},
+    create: {
+      tenantId: juaKali.id,
+      email: "delivery@juakaligrill.co.ke",
+      firstName: "Wanjiku",
+      lastName: "Delivery",
+      passwordHash: ownerHash,
+      role: Role.DELIVERY
+    }
+  });
+
+  const juaDeliveryAgent = await prisma.deliveryAgent.upsert({
+    where: { tenantId_phone: { tenantId: juaKali.id, phone: "0702550191" } },
+    update: {
+      firstName: "Sam",
+      lastName: "Rider",
+      notes: "Primary CBD and Pangani rider.",
+      isActive: true
+    },
+    create: {
+      tenantId: juaKali.id,
+      firstName: "Sam",
+      lastName: "Rider",
+      phone: "0702550191",
+      notes: "Primary CBD and Pangani rider."
+    }
+  });
+
   for (const label of ["T1", "T2", "T3", "Bar", "Terrace"]) {
     await prisma.table.upsert({
       where: { tenantId_label: { tenantId: juaKali.id, label } },
@@ -455,23 +795,183 @@ async function main() {
   }
 
   const stockItems = [
-    { name: "Beef", unit: "kg", quantity: 25, reorderLevel: 6 },
-    { name: "Chicken", unit: "kg", quantity: 20, reorderLevel: 5 },
-    { name: "Tilapia", unit: "kg", quantity: 15, reorderLevel: 4 },
-    { name: "Potatoes", unit: "kg", quantity: 30, reorderLevel: 8 },
-    { name: "Maize Flour", unit: "kg", quantity: 20, reorderLevel: 5 },
-    { name: "Sukuma Wiki", unit: "bunch", quantity: 40, reorderLevel: 10 },
-    { name: "Mango", unit: "kg", quantity: 18, reorderLevel: 5 },
-    { name: "Passion Fruit", unit: "kg", quantity: 12, reorderLevel: 4 }
+    { name: "Beef", unit: StockUnit.KILOGRAM, quantity: 25, reorderLevel: 6 },
+    { name: "Chicken", unit: StockUnit.KILOGRAM, quantity: 20, reorderLevel: 5 },
+    { name: "Tilapia", unit: StockUnit.KILOGRAM, quantity: 15, reorderLevel: 4 },
+    { name: "Potatoes", unit: StockUnit.KILOGRAM, quantity: 30, reorderLevel: 8 },
+    { name: "Maize Flour", unit: StockUnit.KILOGRAM, quantity: 20, reorderLevel: 5 },
+    { name: "Sukuma Wiki", unit: StockUnit.PIECE, quantity: 40, reorderLevel: 10 },
+    { name: "Mango", unit: StockUnit.KILOGRAM, quantity: 18, reorderLevel: 5 },
+    { name: "Passion Fruit", unit: StockUnit.KILOGRAM, quantity: 12, reorderLevel: 4 }
   ];
 
   for (const stock of stockItems) {
     await prisma.stockItem.upsert({
       where: { tenantId_name: { tenantId: juaKali.id, name: stock.name } },
-      update: {},
+      update: {
+        unit: stock.unit,
+        quantity: stock.quantity,
+        reorderLevel: stock.reorderLevel
+      },
       create: { tenantId: juaKali.id, ...stock }
     });
   }
+
+  const juaMenu = await prisma.menuItem.findMany({ where: { tenantId: juaKali.id } });
+  const juaStock = await prisma.stockItem.findMany({ where: { tenantId: juaKali.id } });
+  const juaMenuItem = (name: string) => {
+    const item = juaMenu.find((entry) => entry.name === name);
+    if (!item) throw new Error(`Missing Jua Kali menu item ${name}`);
+    return item;
+  };
+  const juaStockItem = (name: string) => {
+    const item = juaStock.find((entry) => entry.name === name);
+    if (!item) throw new Error(`Missing Jua Kali stock item ${name}`);
+    return item;
+  };
+
+  const nyamaChoma = juaMenuItem("Nyama Choma");
+  const kukuChoma = juaMenuItem("Kuku Choma");
+  const chips = juaMenuItem("Chips");
+  const ugaliSide = juaMenuItem("Ugali");
+  const mangoJuice = juaMenuItem("Mango Juice");
+  const passionSide = juaMenuItem("Passion Juice");
+  const dawaCocktail = juaMenuItem("Dawa Cocktail");
+
+  await prisma.stockItem.upsert({
+    where: { tenantId_name: { tenantId: juaKali.id, name: "Dawa Cocktail Servings" } },
+    update: {
+      type: StockItemType.MENU,
+      menuItemId: dawaCocktail.id,
+      unit: StockUnit.PIECE,
+      quantity: 25,
+      reorderLevel: 5
+    },
+    create: {
+      tenantId: juaKali.id,
+      type: StockItemType.MENU,
+      menuItemId: dawaCocktail.id,
+      name: "Dawa Cocktail Servings",
+      unit: StockUnit.PIECE,
+      quantity: 25,
+      reorderLevel: 5
+    }
+  });
+
+  await prisma.recipe.upsert({
+    where: { menuItemId: nyamaChoma.id },
+    update: {
+      items: {
+        deleteMany: {},
+        create: [
+          { stockItemId: juaStockItem("Beef").id, quantity: 0.5 }
+        ]
+      }
+    },
+    create: {
+      tenantId: juaKali.id,
+      menuItemId: nyamaChoma.id,
+      items: { create: [{ stockItemId: juaStockItem("Beef").id, quantity: 0.5 }] }
+    }
+  });
+
+  await prisma.recipe.upsert({
+    where: { menuItemId: kukuChoma.id },
+    update: {
+      items: {
+        deleteMany: {},
+        create: [
+          { stockItemId: juaStockItem("Chicken").id, quantity: 0.45 }
+        ]
+      }
+    },
+    create: {
+      tenantId: juaKali.id,
+      menuItemId: kukuChoma.id,
+      items: { create: [{ stockItemId: juaStockItem("Chicken").id, quantity: 0.45 }] }
+    }
+  });
+
+  const juaOwner = await prisma.user.findUniqueOrThrow({ where: { email: "0702550190" } });
+  const juaCashier = await prisma.user.findUniqueOrThrow({ where: { email: "cashier@juakaligrill.co.ke" } });
+  const juaTableT2 = await prisma.table.findUniqueOrThrow({ where: { tenantId_label: { tenantId: juaKali.id, label: "T2" } } });
+  const juaTableTerrace = await prisma.table.findUniqueOrThrow({ where: { tenantId_label: { tenantId: juaKali.id, label: "Terrace" } } });
+
+  await upsertSeedOrder({
+    tenantId: juaKali.id,
+    orderNumber: "DIN-0001",
+    type: OrderType.DINE_IN,
+    status: OrderStatus.SENT_TO_KITCHEN,
+    tableId: juaTableT2.id,
+    customerName: "Table T2",
+    createdById: juaCashier.id,
+    createdAt: new Date("2026-04-21T10:05:00.000Z"),
+    items: [
+      { menuItemId: nyamaChoma.id, quantity: 1, unitPrice: 1200, status: OrderItemStatus.PREPARING },
+      { menuItemId: ugaliSide.id, quantity: 2, unitPrice: 100, status: OrderItemStatus.READY },
+      { menuItemId: passionSide.id, quantity: 2, unitPrice: 160, status: OrderItemStatus.READY }
+    ]
+  });
+
+  await upsertSeedOrder({
+    tenantId: juaKali.id,
+    orderNumber: "TKW-0002",
+    type: OrderType.TAKEAWAY,
+    status: OrderStatus.READY,
+    deliveryAgentId: juaDeliveryAgent.id,
+    dispatchSmsRequested: true,
+    dispatchSmsSentAt: new Date("2026-04-21T10:22:00.000Z"),
+    customerName: "Mwikali",
+    customerPhone: "254711222333",
+    deliveryLocation: "Pangani",
+    deliveryAddress: "Third Parklands Avenue",
+    createdById: juaOwner.id,
+    createdAt: new Date("2026-04-21T10:15:00.000Z"),
+    items: [
+      { menuItemId: kukuChoma.id, quantity: 1, unitPrice: 950, status: OrderItemStatus.READY },
+      { menuItemId: chips.id, quantity: 1, unitPrice: 200, status: OrderItemStatus.READY },
+      { menuItemId: mangoJuice.id, quantity: 1, unitPrice: 180, status: OrderItemStatus.READY }
+    ]
+  });
+
+  await upsertSeedOrder({
+    tenantId: juaKali.id,
+    orderNumber: "DIN-0003",
+    type: OrderType.DINE_IN,
+    status: OrderStatus.PAID,
+    tableId: juaTableTerrace.id,
+    customerName: "Terrace group",
+    createdById: juaCashier.id,
+    createdAt: new Date("2026-04-21T10:30:00.000Z"),
+    inventoryDeducted: true,
+    items: [
+      { menuItemId: nyamaChoma.id, quantity: 2, unitPrice: 1200, status: OrderItemStatus.READY },
+      { menuItemId: chips.id, quantity: 3, unitPrice: 200, status: OrderItemStatus.READY }
+    ],
+    payments: [
+      {
+        method: PaymentMethod.CASH,
+        amount: 3000,
+        reference: "CASH-JUA-0003",
+        paidAt: new Date("2026-04-21T10:50:00.000Z")
+      }
+    ]
+  });
+
+  await prisma.smsMessage.deleteMany({ where: { tenantId: juaKali.id, provider: "seed" } });
+  await prisma.smsMessage.createMany({
+    data: [
+      {
+        tenantId: juaKali.id,
+        recipient: juaDeliveryAgent.phone,
+        message: "New pickup TKW-0002 at Jua Kali Grill for Mwikali for Pangani.",
+        status: "SENT",
+        provider: "seed",
+        createdAt: new Date("2026-04-21T10:22:00.000Z"),
+        sentAt: new Date("2026-04-21T10:22:15.000Z")
+      }
+    ]
+  });
 
   // ── Super admin via phone ──
   const phoneAdminHash = await bcrypt.hash("123", 10);

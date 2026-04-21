@@ -110,3 +110,103 @@ menuRouter.post("/items", requireRole(["SUPER_ADMIN", "MANAGER"]), async (req: A
 
   return res.status(201).json(serializeMenuItem(item));
 });
+
+menuRouter.patch("/items/:id", requireRole(["SUPER_ADMIN", "MANAGER"]), async (req: AuthenticatedRequest, res) => {
+  const itemId = Number(req.params.id);
+  const item = await prisma.menuItem.findFirst({
+    where: { id: itemId, tenantId: req.auth!.tenantId }
+  });
+
+  if (!item) {
+    return res.status(404).json({ message: "Menu item not found." });
+  }
+
+  const updates: Record<string, unknown> = {};
+
+  if (req.body?.name !== undefined) {
+    const name = String(req.body.name).trim();
+    if (!name) {
+      return res.status(400).json({ message: "Item name cannot be empty." });
+    }
+    updates.name = name;
+  }
+
+  if (req.body?.price !== undefined) {
+    const price = Number(req.body.price);
+    if (Number.isNaN(price) || price <= 0) {
+      return res.status(400).json({ message: "Price must be greater than zero." });
+    }
+    updates.price = price;
+  }
+
+  if (req.body?.description !== undefined) {
+    updates.description = req.body.description ? String(req.body.description) : null;
+  }
+
+  if (req.body?.photoUrl !== undefined) {
+    updates.photoUrl = req.body.photoUrl ? String(req.body.photoUrl) : null;
+  }
+
+  if (req.body?.isAvailable !== undefined) {
+    updates.isAvailable = Boolean(req.body.isAvailable);
+  }
+
+  if (req.body?.categoryId !== undefined) {
+    const categoryId = Number(req.body.categoryId);
+    if (Number.isNaN(categoryId)) {
+      return res.status(400).json({ message: "A valid category is required." });
+    }
+
+    const category = await prisma.menuCategory.findFirst({
+      where: { id: categoryId, tenantId: req.auth!.tenantId }
+    });
+
+    if (!category) {
+      return res.status(404).json({ message: "Category not found." });
+    }
+
+    updates.categoryId = categoryId;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ message: "Provide at least one field to update." });
+  }
+
+  const updated = await prisma.menuItem.update({
+    where: { id: item.id },
+    data: updates
+  });
+
+  return res.json(serializeMenuItem(updated));
+});
+
+menuRouter.delete("/items/:id", requireRole(["SUPER_ADMIN", "MANAGER"]), async (req: AuthenticatedRequest, res) => {
+  const itemId = Number(req.params.id);
+  const item = await prisma.menuItem.findFirst({
+    where: { id: itemId, tenantId: req.auth!.tenantId },
+    include: {
+      orderItems: {
+        select: { id: true },
+        take: 1
+      }
+    }
+  });
+
+  if (!item) {
+    return res.status(404).json({ message: "Menu item not found." });
+  }
+
+  if (item.orderItems.length > 0) {
+    await prisma.menuItem.update({
+      where: { id: item.id },
+      data: { isAvailable: false }
+    });
+    return res.json({ message: "Menu item removed from sale. Past orders still reference it, so it was archived instead of deleted." });
+  }
+
+  await prisma.menuItem.delete({
+    where: { id: item.id }
+  });
+
+  return res.json({ message: "Menu item removed." });
+});

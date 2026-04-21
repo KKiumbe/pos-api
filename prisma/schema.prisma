@@ -46,6 +46,23 @@ enum PaymentStatus {
   FAILED
 }
 
+enum StockItemType {
+  MENU
+  CONSUMABLE
+}
+
+enum StockUnit {
+  KILOGRAM
+  GRAM
+  LITER
+  MILLILITER
+  CARTON
+  SLICE
+  PIECE
+  BOTTLE
+  PACKET
+}
+
 model Tenant {
   id          Int       @id @default(autoincrement())
   name        String
@@ -61,6 +78,7 @@ model Tenant {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   users       User[]
+  deliveryAgents DeliveryAgent[]
   tables      Table[]
   categories  MenuCategory[]
   menuItems   MenuItem[]
@@ -151,6 +169,7 @@ model MenuItem {
   category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   orderItems  OrderItem[]
   recipe      Recipe?
+  stockItem   StockItem?
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -164,6 +183,9 @@ model Order {
   status        OrderStatus @default(OPEN)
   inventoryDeducted Boolean  @default(false)
   tableId       Int?
+  deliveryAgentId Int?
+  dispatchSmsRequested Boolean @default(false)
+  dispatchSmsSentAt DateTime?
   customerName  String?
   customerPhone String?
   deliveryLocation String?
@@ -173,12 +195,31 @@ model Order {
   updatedAt     DateTime    @updatedAt
   tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   table         Table?      @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  deliveryAgent DeliveryAgent? @relation(fields: [deliveryAgentId], references: [id], onDelete: SetNull)
   createdBy     User        @relation("CreatedOrders", fields: [createdById], references: [id], onDelete: Restrict)
   items         OrderItem[]
   payments      Payment[]
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId, status])
+  @@index([tenantId, deliveryAgentId])
+}
+
+model DeliveryAgent {
+  id        Int      @id @default(autoincrement())
+  tenantId  Int
+  firstName String
+  lastName  String
+  phone     String
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders    Order[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, isActive])
 }
 
 model OrderItem {
@@ -212,13 +253,16 @@ model Payment {
 model StockItem {
   id           Int      @id @default(autoincrement())
   tenantId     Int
+  menuItemId   Int?     @unique
+  type         StockItemType @default(CONSUMABLE)
   name         String
-  unit         String
+  unit         StockUnit
   quantity     Decimal  @db.Decimal(10, 2)
   reorderLevel Decimal  @db.Decimal(10, 2)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  menuItem     MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
   recipeItems  RecipeItem[]
 
   @@unique([tenantId, name])
@@ -243,6 +287,7 @@ model RecipeItem {
   recipeId    Int
   stockItemId Int
   quantity    Decimal   @db.Decimal(10, 2)
+  unit        StockUnit  @default(KILOGRAM)
   recipe      Recipe    @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
 }

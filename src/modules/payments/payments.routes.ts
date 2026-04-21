@@ -8,48 +8,6 @@ import { serializeOrder } from "../../utils/serializers.js";
 
 export const paymentsRouter = Router();
 
-async function deductInventoryForOrder(tx: any, order: any) {
-  if (order.inventoryDeducted) {
-    return;
-  }
-
-  for (const item of order.items) {
-    if (!item.menuItem.recipe) {
-      continue;
-    }
-
-    const recipe = await tx.recipe.findUnique({
-      where: { id: item.menuItem.recipe.id },
-      include: { items: true }
-    });
-
-    if (!recipe) {
-      continue;
-    }
-
-    for (const recipeItem of recipe.items) {
-      const stockItem = await tx.stockItem.findUniqueOrThrow({
-        where: { id: recipeItem.stockItemId }
-      });
-
-      await tx.stockItem.update({
-        where: { id: stockItem.id },
-        data: {
-          quantity: Number(stockItem.quantity) - Number(recipeItem.quantity) * item.quantity
-        }
-      });
-    }
-  }
-
-  await tx.order.update({
-    where: { id: order.id },
-    data: {
-      status: "PAID",
-      inventoryDeducted: true
-    }
-  });
-}
-
 paymentsRouter.use(authenticate);
 paymentsRouter.use(requireRole(["SUPER_ADMIN", "MANAGER", "CASHIER"]));
 
@@ -108,8 +66,13 @@ paymentsRouter.post("/", async (req: AuthenticatedRequest, res) => {
 
     const paidTotal = payments.reduce((sum, payment) => sum + Number(payment.amount), 0);
 
-    if (!order.inventoryDeducted && paidTotal >= totalDue) {
-      await deductInventoryForOrder(tx, order);
+    if (paidTotal >= totalDue && order.status === "READY") {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: "PAID"
+        }
+      });
     }
   });
 
